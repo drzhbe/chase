@@ -17,38 +17,39 @@
   </style>
 </head>
 <body>
-  <div id='root'></div>
+  <canvas id='canvas'></div>
   <script>
+    /*
+      PowerUps:
+      1. SlowMo
+      2. Shrink
+      3. Reveal dust
+      4. Night
+
+      Bosses:
+      1. Chase
+      2. Invisible
+    */
     const r = Math.random;
 
     class Box {
       constructor({
-          parent,
+          canvas,
           borderColor = 'black',
           bgColor,
           w = r() * 200,
           h = r() * 200,
-          mx = parent.clientWidth - w,
-          my = parent.clientHeight - h,
+          mx = canvas.clientWidth - w,
+          my = canvas.clientHeight - h,
           x = r() * mx,
           y = r() * my,
           border = r() * 5,
           speed = r() * 10,
       }) {
-        const r = Math.random;
-        const element = document.createElement('div');
-        element.classList.add('box');
-        element.style.left = `${x}px`;
-        element.style.top = `${y}px`;
-        element.style.width = `${w}px`;
-        element.style.height = `${h}px`;
-        element.style.border = `${border}px solid ${borderColor}`;
-        if (bgColor) {
-          element.style.background = bgColor;
-        }
-        parent.appendChild(element);
-
+        this.inCollision = false;
+        this.borderColor = borderColor;
         this.bgColor = bgColor;
+        this.border = border;
         this.mx = mx;
         this.my = my;
         this.w = w;
@@ -58,7 +59,28 @@
         this.ox = x;
         this.oy = y;
         this.speed = speed;
-        this.element = element;
+      }
+
+      distance(a, b) {
+        return (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+      }
+
+      left() { return this.x; }
+      right() { return this.x + this.w; }
+      top() { return this.y; }
+      bottom() { return this.y + this.h; }
+
+      collide(box) {
+        return (this.left() < box.right() && this.right() > box.left())
+            && (this.top() < box.bottom() && this.bottom() > box.top());
+      }
+    }
+
+    class Player extends Box {
+      swapSides() {
+        const w = this.w;
+        this.w = this.h;
+        this.h = w;
       }
 
       move(keycode) {
@@ -78,32 +100,43 @@
           default:
             break;
         }
-        this.element.style.transform = `translate(${this.x - this.ox}px, ${this.y - this.oy}px)`;
       }
+    }
 
+    class Neutral extends Box {
       moveToTarget() {
         const epsilon = 1;
-        let target = this.target;
-        if (!target ||
-            (this.x - target.x) ** 2 + (this.y - target.y) ** 2 < epsilon
-        ) {
-          this.target = { x: Math.random() * this.mx, y: Math.random() * this.my };
+        const distance = this.target ? this.distance(this, this.target) : epsilon + 1;
+        if (!this.target || distance < epsilon) {
+          this.target = { x: r() * this.mx, y: r() * this.my };
         }
-        target = this.target;
-        const step = Math.min(this.speed, target.x - this.x);
-        this.x += step;
-        this.y += Math.min(this.speed - step, target.y - this.y);
-        this.element.style.transform = `translate(${this.x - this.ox}px, ${this.y - this.oy}px)`;
+        let { x, y, target } = this;
+        let dx = target.x - x;
+        dx = dx > 0
+            ? Math.min(this.speed, dx)
+            : Math.max(-this.speed, dx);
+        let dy = target.y - y;
+        dy = dy > 0
+            ? Math.min(this.speed - dx, dy)
+            : Math.max(-(this.speed - dx), dy);
+        this.x += dx;
+        this.y += dy;
       }
+    }
 
-      left() { return this.x; }
-      right() { return this.x + this.w; }
-      top() { return this.y; }
-      bottom() { return this.y + this.h; }
-
-      collide(box) {
-        return (this.left() < box.right() && this.right() > box.left())
-            && (this.top() < box.bottom() && this.bottom() > box.top());
+    class Chaser extends Box {
+      chase(player) {
+        let { x, y } = this;
+        let dx = player.x - x;
+        dx = dx > 0
+            ? Math.min(this.speed, dx)
+            : Math.max(-this.speed, dx);
+        let dy = player.y - y;
+        dy = dy > 0
+            ? Math.min(this.speed - dx, dy)
+            : Math.max(-(this.speed - dx), dy);
+        this.x += dx;
+        this.y += dy;
       }
     }
 
@@ -112,30 +145,57 @@
         if (e.keyCode >= 37 && e.keyCode <= 40) {
           box.move(e.keyCode);
         }
+        if (e.keyCode === 32) {
+          // TODO: fix max values when swapped
+          // box.swapSides();
+        }
       });
     }
 
-    function update(player, enemies) {
+    function update(ctx, player, enemies) {
       enemies.forEach(e => {
-        e.moveToTarget();
-        e.element.style.background = 'transparent';
+        if (e instanceof Neutral) {
+          e.moveToTarget();
+        } else if (e instanceof Chaser) {
+          e.chase(player);
+        }
+        e.inCollision = false;
       });
       const collider = enemies.find(e => e.collide(player));
       if (collider) {
-        collider.element.style.background = 'lightcoral';
-        player.element.style.background = 'lightcoral';
+        collider.inCollision = true;
+        player.inCollision = true;
       } else {
-        player.element.style.background = player.bgColor;
+        player.inCollision = false;
       }
-    }
-    
 
-    const parent = document.getElementById('root');
-    const player = new Box({ parent, bgColor: 'lightblue', speed: 50 });
+      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+
+      ctx.lineWidth = player.border;
+      ctx.strokeRect(player.x, player.y, player.w, player.h);
+      ctx.fillStyle = player.inCollision ? 'lightcoral' : player.bgColor;
+      ctx.fillRect(player.x, player.y, player.w, player.h);
+
+      enemies.forEach(e => {
+        ctx.lineWidth = e.border;
+        ctx.strokeRect(e.x, e.y, e.w, e.h);
+        ctx.fillStyle = e.inCollision ? 'lightcoral' : 'transparent';
+        ctx.fillRect(e.x, e.y, e.w, e.h);
+      });
+
+      requestAnimationFrame(upd);
+    }
+
+    const canvas = document.getElementById('canvas');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const ctx = canvas.getContext('2d');
+    const player = new Player({ canvas, bgColor: 'lightblue', speed: 50 });
     addKeyboardEvents(player);
-    const enemies = Array.from({ length: 10 }).map(_ => new Box({ parent }));
-    const upd = () => update(player, enemies);
-    setInterval(upd, 30); // can use rAF, but it's buggy in chrome
+    const enemies = Array.from({ length: 10 }).map(_ => new Neutral({ canvas }));
+    enemies.push(new Chaser({ canvas }));
+    const upd = () => update(ctx, player, enemies);
+    upd();
   </script>
 </body>
 </html>
