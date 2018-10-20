@@ -147,6 +147,7 @@
     }
 
     class Player extends Box {
+      // TODO: before use make sure mx and my are updated
       swapSides() {
         const w = this.w;
         this.w = this.h;
@@ -242,6 +243,12 @@
       }
     }
 
+    class SlowMoAbility extends Ability {
+      effect(enemies) {
+        
+      }
+    }
+
     class Drawer {
       constructor(ctx, width, height) {
         this.ctx = ctx;
@@ -260,15 +267,28 @@
       }
     }
 
+    function TODOslowMo() {
+      enemies.forEach(e => {
+        e.origSpeed = e.speed;
+        e.speed /= 4;
+      });
+      setTimeout(() => {
+        enemies.forEach(e => e.speed = e.origSpeed);
+      }, 2000);
+    }
+
     function addKeyboardEvents(box) {
       window.addEventListener('keydown', e => {
         if (e.keyCode >= 37 && e.keyCode <= 40) {
           box.moveByKeycode(e.keyCode);
         }
         if (e.keyCode === 32) {
-          // TODO: fix max values when swapped
-          // box.swapSides();
+          TODOslowMo();
         }
+      });
+
+      document.body.addEventListener('touchstart', e => {
+        TODOslowMo();
       });
 
       window.addEventListener('deviceorientation', e => {
