@@ -31,20 +31,25 @@
       2. Invisible
     */
     const r = Math.random;
+    const clamp = (v, min, max) => Math.max(0, Math.min(v, max));
+    const epsilon = 1;
 
     class Box {
       constructor({
           canvas,
           borderColor = 'black',
           bgColor,
-          w = r() * 200,
-          h = r() * 200,
+          w = r() * (canvas.clientWidth / 10),
+          h = r() * (canvas.clientHeight / 10),
           mx = canvas.clientWidth - w,
           my = canvas.clientHeight - h,
           x = r() * mx,
           y = r() * my,
           border = r() * 5,
           speed = r() * 10,
+          edible = false,
+          status = 'none',
+          abilities = [],
       }) {
         this.inCollision = false;
         this.borderColor = borderColor;
@@ -59,20 +64,85 @@
         this.ox = x;
         this.oy = y;
         this.speed = speed;
+        this.edible = edible;
+        this.visible = true;
+        this.cooldownStarted = 0;
+        this.cooldownValue = 1000;
+        this.lastDirection = undefined;
+        this.abilities = {};
+        abilities.forEach(a => {
+          this.abilities[a.name] = a.create({ initiator: this });
+        })
       }
 
-      distance(a, b) {
-        return (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+      get left() { return this.x; }
+      get right() { return this.x + this.w; }
+      get top() { return this.y; }
+      get bottom() { return this.y + this.h; }
+      get cx() { return this.x + this.w / 2; }
+      get cy() { return this.y + this.h / 2; }
+      get color() {
+        if (this.inCollision) {
+          return 'lightcoral';
+        } else if (this.edible) {
+          return 'lightgreen';
+        } else if (this.bgColor) {
+          return this.bgColor;
+        } else {
+          return 'transparent';
+        }
       }
 
-      left() { return this.x; }
-      right() { return this.x + this.w; }
-      top() { return this.y; }
-      bottom() { return this.y + this.h; }
+      spawn(delay = 0) {
+        this.visible = false;
+        setTimeout(() => {
+          this.w = r() * 200;
+          this.h = r() * 200;
+          this.x = r() * this.mx;
+          this.y = r() * this.my;
+          this.visible = true;
+        }, delay);
+      }
+
+      distance(to) {
+        return (this.x - to.x) ** 2 + (this.y - to.y) ** 2;
+      }
 
       collide(box) {
-        return (this.left() < box.right() && this.right() > box.left())
-            && (this.top() < box.bottom() && this.bottom() > box.top());
+        return (this.left < box.right && this.right > box.left)
+            && (this.top < box.bottom && this.bottom > box.top);
+      }
+
+      moveTo(destination) {
+        const distance = this.distance(destination);
+        if (distance < epsilon) {
+          this.destination = undefined;
+          return;
+        }
+
+        let { x, y } = this;
+        let dx = destination.x - x;
+        dx = dx > 0
+            ? Math.min(this.speed, dx)
+            : Math.max(-this.speed, dx);
+        let dy = destination.y - y;
+        dy = dx !== 0
+            ? 0
+            : dy > 0
+              ? Math.min(this.speed - dx, dy)
+              : Math.max(-(this.speed - dx), dy);
+        this.x += dx;
+        this.y += dy;
+
+        if (dx < 0) {
+          this.lastDirection = 'left';
+        } else if (dx > 0) {
+          this.lastDirection = 'right';
+        } else if (dy < 0) {
+          this.lastDirection = 'up';
+        } else if (dy > 0) {
+          this.lastDirection = 'down';
+        }
       }
     }
 
@@ -83,7 +153,7 @@
         this.h = w;
       }
 
-      move(keycode) {
+      moveByKeycode(keycode) {
         switch (keycode) {
           case 37: // left
             this.x = Math.max(0, this.x - this.speed);
@@ -101,87 +171,146 @@
             break;
         }
       }
+
+      moveByGyroscope(e) {
+        let x = window.innerHeight > window.innerWidth ? e.gamma : e.beta;
+        let y = window.innerHeight > window.innerWidth ? e.beta : -e.gamma;
+        this.x = clamp(this.x + x / 2, 0, this.mx);
+        this.y = clamp(this.y + y / 2, 0, this.my);
+      }
     }
 
     class Neutral extends Box {
-      moveToTarget() {
-        const epsilon = 1;
-        const distance = this.target ? this.distance(this, this.target) : epsilon + 1;
-        if (!this.target || distance < epsilon) {
-          this.target = { x: r() * this.mx, y: r() * this.my };
+      moveToRandomDestination() {
+        if (!this.destination) {
+          this.destination = { x: r() * this.mx, y: r() * this.my };
         }
-        let { x, y, target } = this;
-        let dx = target.x - x;
-        dx = dx > 0
-            ? Math.min(this.speed, dx)
-            : Math.max(-this.speed, dx);
-        let dy = target.y - y;
-        dy = dy > 0
-            ? Math.min(this.speed - dx, dy)
-            : Math.max(-(this.speed - dx), dy);
-        this.x += dx;
-        this.y += dy;
+        this.moveTo(this.destination);
       }
     }
 
     class Chaser extends Box {
-      chase(player) {
-        let { x, y } = this;
-        let dx = player.x - x;
-        dx = dx > 0
-            ? Math.min(this.speed, dx)
-            : Math.max(-this.speed, dx);
-        let dy = player.y - y;
-        dy = dy > 0
-            ? Math.min(this.speed - dx, dy)
-            : Math.max(-(this.speed - dx), dy);
-        this.x += dx;
-        this.y += dy;
+    }
+
+    class Ability {
+      constructor(cooldown, name) {
+        this.name = name;
+        this.cooldown = cooldown;
+        this.cooldownStarted = 0;
+      }
+      get ready() {
+        return Date.now() - this.cooldownStarted > this.cooldown;
+      }
+      use(options) {
+        if (this.ready) {
+          this.cooldownStarted = Date.now();
+          this.effect(options);
+        }
+      }
+      effect(options) {
+        // implement
+      }
+    }
+
+    class PushAbility extends Ability {
+      constructor({ cooldown = 1000, initiator }) {
+        super(cooldown, 'push');
+        this.initiator = initiator;
+      }
+      static add(cooldown) {
+        return {
+          name: 'push',
+          create: ({ initiator }) => new PushAbility({ cooldown, initiator }),
+        }
+      }
+      effect(target) {
+        const { x, y, mx, my } = target;
+        switch (this.initiator.lastDirection) {
+          case 'left':
+            target.destination = { x: 0, y };
+            break;
+          case 'right':
+            target.destination = { x: mx, y };
+            break;
+          case 'up':
+            target.destination = { x, y: 0 };
+            break;
+          case 'down':
+            target.destination = { x, y: my };
+            break;
+        }
+      }
+    }
+
+    class Drawer {
+      constructor(ctx, width, height) {
+        this.ctx = ctx;
+        this.width = width;
+        this.height = height;
+      }
+      clear() {
+        this.ctx.clearRect(0, 0, this.width, this.height);
+      }
+      drawBox(box) {
+        const { x, y, w, h, border, color } = box;
+        ctx.lineWidth = border;
+        ctx.strokeRect(x, y, w, h);
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y, w, h);
       }
     }
 
     function addKeyboardEvents(box) {
       window.addEventListener('keydown', e => {
         if (e.keyCode >= 37 && e.keyCode <= 40) {
-          box.move(e.keyCode);
+          box.moveByKeycode(e.keyCode);
         }
         if (e.keyCode === 32) {
           // TODO: fix max values when swapped
           // box.swapSides();
         }
       });
+
+      window.addEventListener('deviceorientation', e => {
+        box.moveByGyroscope(e);
+      });
     }
 
-    function update(ctx, player, enemies) {
+    function update(drawer, player, enemies) {
+      // MOVE PLAYER
+      if (player.destination) {
+        player.moveTo(player.destination);
+      }
+      // MOVE ENEMIES
       enemies.forEach(e => {
+        if (!e.visible) {
+          return;
+        }
         if (e instanceof Neutral) {
-          e.moveToTarget();
+          e.moveToRandomDestination();
         } else if (e instanceof Chaser) {
-          e.chase(player);
+          e.moveTo(player);
         }
         e.inCollision = false;
       });
-      const collider = enemies.find(e => e.collide(player));
+      // COLLIDE
+      const collider = enemies.find(e => e.visible && e.collide(player));
       if (collider) {
         collider.inCollision = true;
         player.inCollision = true;
+        if (collider.edible) {
+          collider.spawn(2000);
+        } else if (collider instanceof Chaser) {
+          collider.abilities.push.use(player);
+        }
       } else {
         player.inCollision = false;
       }
 
-      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-
-      ctx.lineWidth = player.border;
-      ctx.strokeRect(player.x, player.y, player.w, player.h);
-      ctx.fillStyle = player.inCollision ? 'lightcoral' : player.bgColor;
-      ctx.fillRect(player.x, player.y, player.w, player.h);
-
-      enemies.forEach(e => {
-        ctx.lineWidth = e.border;
-        ctx.strokeRect(e.x, e.y, e.w, e.h);
-        ctx.fillStyle = e.inCollision ? 'lightcoral' : 'transparent';
-        ctx.fillRect(e.x, e.y, e.w, e.h);
-      });
+      // REDRAW
+      drawer.clear();
+      drawer.drawBox(player);
+      enemies.forEach(e => e.visible && drawer.drawBox(e));
 
       requestAnimationFrame(upd);
     }
@@ -193,8 +322,10 @@
     const player = new Player({ canvas, bgColor: 'lightblue', speed: 50 });
     addKeyboardEvents(player);
     const enemies = Array.from({ length: 10 }).map(_ => new Neutral({ canvas }));
-    enemies.push(new Chaser({ canvas }));
-    const upd = () => update(ctx, player, enemies);
+    enemies.push(new Neutral({ canvas, edible: true }));
+    enemies.push(new Chaser({ canvas, speed: 2, abilities: [PushAbility.add()] }));
+    const drawer = new Drawer(ctx, canvas.clientWidth, canvas.clientHeight);
+    const upd = () => update(drawer, player, enemies);
     upd();
   </script>
 </body>
