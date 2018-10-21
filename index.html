@@ -33,6 +33,7 @@
     const r = Math.random;
     const clamp = (v, min, max) => Math.max(0, Math.min(v, max));
     const epsilon = 1;
+    const HAS_TOUCH = 'ontouchstart' in document.documentElement;
 
     class Box {
       constructor({
@@ -147,6 +148,11 @@
     }
 
     class Player extends Box {
+      constructor(options) {
+        super(options);
+        this.hp = 3;
+      }
+
       // TODO: before use make sure mx and my are updated
       swapSides() {
         const w = this.w;
@@ -202,6 +208,9 @@
       get ready() {
         return Date.now() - this.cooldownStarted > this.cooldown;
       }
+      get remainingCooldown() {
+        return Math.ceil((this.cooldown - (Date.now() - this.cooldownStarted)) / 1000);
+      }
       use(options) {
         if (this.ready) {
           this.cooldownStarted = Date.now();
@@ -244,37 +253,58 @@
     }
 
     class SlowMoAbility extends Ability {
+      constructor({ cooldown = 5000 }) {
+        super(cooldown, 'slowMo');
+        this.key = HAS_TOUCH ? 'tap' : 'space';
+      }
+      static add(cooldown) {
+        return {
+          name: 'slowMo',
+          create: () => new SlowMoAbility({}),
+        }
+      }
       effect(enemies) {
-        
+        enemies.forEach(e => {
+          e.origSpeed = e.speed;
+          e.speed /= 4;
+        });
+        setTimeout(() => {
+          enemies.forEach(e => e.speed = e.origSpeed);
+        }, 2000);
       }
     }
 
     class Drawer {
-      constructor(ctx, width, height) {
-        this.ctx = ctx;
+      constructor(canvas, width, height) {
         this.width = width;
         this.height = height;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+        canvas.style.width = width + 'px';
+        canvas.style.height = height + 'px';
+        this.ctx = canvas.getContext('2d');
+        this.ctx.scale(dpr, dpr);
+        this.ctx.font = '26px Courier';
       }
       clear() {
         this.ctx.clearRect(0, 0, this.width, this.height);
       }
       drawBox(box) {
         const { x, y, w, h, border, color } = box;
-        ctx.lineWidth = border;
-        ctx.strokeRect(x, y, w, h);
-        ctx.fillStyle = color;
-        ctx.fillRect(x, y, w, h);
+        this.ctx.lineWidth = border;
+        this.ctx.strokeRect(x, y, w, h);
+        this.ctx.fillStyle = color;
+        this.ctx.fillRect(x, y, w, h);
+      }
+      drawText(text, x, y) {
+        this.ctx.fillStyle = 'rgba(0,0,0,.3)';
+        this.ctx.fillText(text, x, y);
       }
     }
 
     function TODOslowMo() {
-      enemies.forEach(e => {
-        e.origSpeed = e.speed;
-        e.speed /= 4;
-      });
-      setTimeout(() => {
-        enemies.forEach(e => e.speed = e.origSpeed);
-      }, 2000);
+      
     }
 
     function addKeyboardEvents(box) {
@@ -283,12 +313,12 @@
           box.moveByKeycode(e.keyCode);
         }
         if (e.keyCode === 32) {
-          TODOslowMo();
+          box.abilities.slowMo.use(enemies);
         }
       });
 
       document.body.addEventListener('touchstart', e => {
-        TODOslowMo();
+        box.abilities.slowMo.use(enemies);
       });
 
       window.addEventListener('deviceorientation', e => {
@@ -316,11 +346,15 @@
       // COLLIDE
       const collider = enemies.find(e => e.visible && e.collide(player));
       if (collider) {
-        collider.inCollision = true;
         player.inCollision = true;
+        collider.inCollision = true;
         if (collider.edible) {
+          player.hp = clamp(player.hp + 1, 0, 3);
           collider.spawn(2000);
-        } else if (collider instanceof Chaser) {
+        } else {
+          player.hp = clamp(player.hp - 1, 0, 3);
+        }
+        if (collider instanceof Chaser) {
           collider.abilities.push.use(player);
         }
       } else {
@@ -330,21 +364,22 @@
       // REDRAW
       drawer.clear();
       drawer.drawBox(player);
+      const hp = Array.from({ length: 3 }).map((v, i) => i < player.hp - 1 ? '❤️' : '🖤').join('');
+      drawer.drawText(hp, 10, 30);
+      const slowMo = player.abilities.slowMo;
+      drawer.drawText(`⏳${slowMo.ready ? slowMo.key : slowMo.remainingCooldown}`, 100, 30);
       enemies.forEach(e => e.visible && drawer.drawBox(e));
 
       requestAnimationFrame(upd);
     }
 
     const canvas = document.getElementById('canvas');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    const ctx = canvas.getContext('2d');
-    const player = new Player({ canvas, bgColor: 'lightblue', speed: 50 });
+    const drawer = new Drawer(canvas, window.innerWidth, window.innerHeight);
+    const player = new Player({ canvas, bgColor: 'lightblue', speed: 50, abilities: [SlowMoAbility.add()] });
     addKeyboardEvents(player);
     const enemies = Array.from({ length: 10 }).map(_ => new Neutral({ canvas }));
     enemies.push(new Neutral({ canvas, edible: true }));
     enemies.push(new Chaser({ canvas, speed: 2, abilities: [PushAbility.add()] }));
-    const drawer = new Drawer(ctx, canvas.clientWidth, canvas.clientHeight);
     const upd = () => update(drawer, player, enemies);
     upd();
   </script>
