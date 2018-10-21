@@ -416,7 +416,7 @@
       drawer.drawText(hp, 10, 30);
       const slowMo = player.abilities.slowMo;
       drawer.drawText(`⏳${slowMo.ready ? slowMo.key : slowMo.remainingCooldown}`, 100, 30);
-      drawer.drawText(`🥦${player.eaten}`, window.innerWidth / 2, 30);
+      drawer.drawText(`🥦${player.eaten}`, window.innerWidth - 60, 30);
       
       enemies.forEach(e => e.visible && drawer.drawBox(e));
 
