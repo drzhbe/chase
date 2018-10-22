@@ -165,14 +165,15 @@
       }
 
       takeDamage(amount) {
-        player.hp = clamp(player.hp - amount, 0, this.maxHp);
-        if (player.hp === 0) {
+        game.drawer.startShaking();
+        this.hp = clamp(this.hp - amount, 0, this.maxHp);
+        if (this.hp === 0) {
           this.game.screen = 'gameOver';
         }
       }
 
       restoreHealth(amount) {
-        player.hp = clamp(player.hp + amount, 0, this.maxHp);
+        this.hp = clamp(this.hp + amount, 0, this.maxHp);
       }
 
       // TODO: before use make sure mx and my are updated
@@ -220,6 +221,10 @@
 
     class Chaser extends Box {
     }
+
+
+    // ABILITY
+
 
     class Ability {
       constructor(cooldown, name) {
@@ -306,6 +311,10 @@
       }
     }
 
+
+    // DRAWER
+
+
     class Drawer {
       constructor(canvas, width, height) {
         this.width = width;
@@ -318,9 +327,29 @@
         this.ctx = canvas.getContext('2d');
         this.ctx.scale(dpr, dpr);
         this.ctx.font = '26px Courier';
+        this.shakeTick = 0;
       }
       clear() {
         this.ctx.clearRect(0, 0, this.width, this.height);
+      }
+      scale(s) {
+        this.ctx.scale(s, s);
+      }
+      startShaking() {
+        this.shakeTick = 12;
+      }
+      shake() {
+        if (this.shakeTick === 0) {
+          return;
+        }
+        this.shakeTick--;
+        const k = this.shakeTick % 4;
+        const l = k % 2;
+        if (l) {
+          return;
+        }
+        const m = k ? 1 : -1;
+        this.ctx.translate(10 * m, 0);
       }
       drawBox(box) {
         const { x, y, w, h, border, color } = box;
@@ -330,7 +359,7 @@
         this.ctx.fillRect(x, y, w, h);
       }
       drawText(text, x, y) {
-        this.ctx.fillStyle = 'rgba(0,0,0,.3)';
+        // this.ctx.fillStyle = 'rgba(0,0,0,.3)';
         this.ctx.fillText(text, x, y);
       }
       drawMiddleText(text) {
@@ -339,106 +368,124 @@
       }
     }
 
-    function TODOslowMo() {
-      
-    }
 
-    function addKeyboardEvents(box) {
-      window.addEventListener('keydown', e => {
-        if (e.keyCode >= 37 && e.keyCode <= 40) {
-          box.moveByKeycode(e.keyCode);
+    // GAME
+
+
+    class Game {
+      constructor(canvas) {
+        this.state = {
+          screen: 'game' // 'game' | 'gameOver'
+        };
+        this.drawer = new Drawer(canvas, window.innerWidth, window.innerHeight);
+        this.restart();
+        this.listenEvents();
+        this.upd = () => this.update();
+        this.upd();
+      }
+
+      restart() {
+        const game = this.state;
+        this.state.screen = 'game';
+        this.player = new Player({ game, canvas, bgColor: 'lightblue', speed: 50, abilities: [SlowMoAbility.add()] });
+        this.enemies = Array.from({ length: 10 }).map(_ => new Neutral({ game, canvas }));
+        this.enemies.push(new Neutral({ game, canvas, edible: true }));
+        this.enemies.push(new Chaser({ game, canvas, speed: 2, abilities: [PushAbility.add()] }));
+      }
+
+      update() {
+        const { drawer, player, enemies } = this;
+        // MOVE PLAYER
+        if (player.destination) {
+          player.moveTo(player.destination);
         }
-        if (e.keyCode === 32) {
-          if (game.screen === 'gameOver') {
-            box.eaten = 0;
-            box.restoreHealth(3);
-            game.screen = 'game';
+
+        // MOVE ENEMIES
+        enemies.forEach(e => {
+          if (!e.visible) {
+            return;
+          }
+          if (e instanceof Neutral) {
+            e.moveToRandomDestination();
+          } else if (e instanceof Chaser) {
+            e.moveTo(player);
+          }
+          e.inCollision = false;
+        });
+
+        // COLLIDE
+        if (this.state.screen === 'game') {
+          const collider = enemies.find(e => e.visible && e.collide(player));
+          if (collider) {
+            player.inCollision = true;
+            collider.inCollision = true;
+            if (collider.edible) {
+              player.eat(1);
+              collider.spawn(2000);
+            } else {
+              collider.abilities.attack.use({ target: player });
+            }
+            if (collider instanceof Chaser) {
+              collider.abilities.push.use(player);
+            }
           } else {
-            box.abilities.slowMo.use(enemies);
+            player.inCollision = false;
           }
         }
-      });
 
-      document.body.addEventListener('touchstart', e => {
-        if (game.screen === 'gameOver') {
-          box.eaten = 0;
-          box.restoreHealth(3);
-          game.screen = 'game';
-        } else {
-          box.abilities.slowMo.use(enemies);
+        // REDRAW
+        drawer.clear();
+        drawer.drawBox(player);
+        const hp = Array.from({ length: 3 }).map((v, i) => i < player.hp ? '❤️' : '🖤').join('');
+        drawer.drawText(hp, 10, 30);
+        const slowMo = player.abilities.slowMo;
+        drawer.drawText(`⏳${slowMo.ready ? slowMo.key : slowMo.remainingCooldown}`, 100, 30);
+        drawer.drawText(`🥦${player.eaten}`, 10, 60);
+        enemies.forEach(e => e.visible && drawer.drawBox(e));
+
+        // GAMEOVER
+        if (this.state.screen === 'gameOver') {
+          drawer.drawMiddleText('GAME OVER');
+          if (enemies.length < 500) {
+            enemies.push(new Neutral({ game, canvas }));
+          }
         }
-      });
 
-      window.addEventListener('deviceorientation', e => {
-        box.moveByGyroscope(e);
-      });
+        drawer.shake();
+
+        requestAnimationFrame(this.upd);
+      }
+
+      userAction() {
+        if (this.state.screen === 'gameOver') {
+          this.restart();
+        } else {
+          this.player.abilities.slowMo.use(this.enemies);
+        }
+      }
+
+      listenEvents() {
+        window.addEventListener('keydown', e => {
+          if (e.keyCode >= 37 && e.keyCode <= 40) {
+            this.player.moveByKeycode(e.keyCode);
+          }
+          if (e.keyCode === 32) {
+            this.userAction();
+          }
+        });
+
+        document.body.addEventListener('touchstart', e => {
+          this.userAction();
+        });
+
+        window.addEventListener('deviceorientation', e => {
+          this.player.moveByGyroscope(e);
+        });
+      }
     }
 
-    function update(drawer, player, enemies) {
-      // MOVE PLAYER
-      if (player.destination) {
-        player.moveTo(player.destination);
-      }
-      // MOVE ENEMIES
-      enemies.forEach(e => {
-        if (!e.visible) {
-          return;
-        }
-        if (e instanceof Neutral) {
-          e.moveToRandomDestination();
-        } else if (e instanceof Chaser) {
-          e.moveTo(player);
-        }
-        e.inCollision = false;
-      });
-      // COLLIDE
-      const collider = enemies.find(e => e.visible && e.collide(player));
-      if (collider) {
-        player.inCollision = true;
-        collider.inCollision = true;
-        if (collider.edible) {
-          player.eat(1);
-          collider.spawn(2000);
-        } else {
-          collider.abilities.attack.use({ target: player });
-        }
-        if (collider instanceof Chaser) {
-          collider.abilities.push.use(player);
-        }
-      } else {
-        player.inCollision = false;
-      }
-
-      // REDRAW
-      drawer.clear();
-      drawer.drawBox(player);
-      const hp = Array.from({ length: 3 }).map((v, i) => i < player.hp ? '❤️' : '🖤').join('');
-      drawer.drawText(hp, 10, 30);
-      const slowMo = player.abilities.slowMo;
-      drawer.drawText(`⏳${slowMo.ready ? slowMo.key : slowMo.remainingCooldown}`, 100, 30);
-      drawer.drawText(`🥦${player.eaten}`, window.innerWidth - 60, 30);
-      
-      enemies.forEach(e => e.visible && drawer.drawBox(e));
-
-      // GAMEOVER
-      if (game.screen === 'gameOver') {
-        drawer.drawMiddleText('GAME OVER');
-      }
-
-      requestAnimationFrame(upd);
-    }
-
-    // screen: 'game' | 'gameOver'
-    const game = { screen: 'game' };
     const canvas = document.getElementById('canvas');
-    const drawer = new Drawer(canvas, window.innerWidth, window.innerHeight);
-    const player = new Player({ game, canvas, bgColor: 'lightblue', speed: 50, abilities: [SlowMoAbility.add()] });
-    addKeyboardEvents(player);
-    const enemies = Array.from({ length: 10 }).map(_ => new Neutral({ game, canvas }));
-    enemies.push(new Neutral({ game, canvas, edible: true }));
-    enemies.push(new Chaser({ game, canvas, speed: 2, abilities: [PushAbility.add()] }));
-    const upd = () => update(drawer, player, enemies);
-    upd();
+    const game = new Game(canvas);
   </script>
 </body>
 </html>
