@@ -371,6 +371,13 @@
 
     // GAME
 
+    const PHASE = {
+      Alone: 0,
+      Food: 1,
+      Enemies: 2,
+      Slomo: 3,
+      Chaser: 4,
+    };
 
     class Game {
       constructor(canvas) {
@@ -388,13 +395,21 @@
         const game = this.state;
         this.state.screen = 'game';
         this.player = new Player({ game, canvas, bgColor: 'lightblue', speed: 50, abilities: [SlowMoAbility.add()] });
-        this.enemies = Array.from({ length: 10 }).map(_ => new Neutral({ game, canvas }));
-        this.enemies.push(new Neutral({ game, canvas, edible: true }));
-        this.enemies.push(new Chaser({ game, canvas, speed: 2, abilities: [PushAbility.add()] }));
+        this.enemies = [];
+        this.startTime = Date.now();
+        this.phase = PHASE.Alone;
       }
 
       update() {
         const { drawer, player, enemies } = this;
+        const { game } = this.state;
+        const now = Date.now();
+
+        if (now - this.startTime > 2000 && this.phase === PHASE.Alone) {
+          this.enemies.push(new Neutral({ game, canvas, edible: true }));
+          this.phase++;
+        }
+
         // MOVE PLAYER
         if (player.destination) {
           player.moveTo(player.destination);
@@ -417,12 +432,13 @@
         if (this.state.screen === 'game') {
           const collider = enemies.find(e => e.visible && e.collide(player));
           if (collider) {
-            player.inCollision = true;
-            collider.inCollision = true;
             if (collider.edible) {
               player.eat(1);
               collider.spawn(2000);
+              this.phaseEffect();
             } else {
+              player.inCollision = true;
+              collider.inCollision = true;
               collider.abilities.attack.use({ target: player });
             }
             if (collider instanceof Chaser) {
@@ -454,6 +470,30 @@
         drawer.shake();
 
         requestAnimationFrame(this.upd);
+      }
+
+      phaseEffect() {
+        if (this.phase === PHASE.Food) {
+          setTimeout(() => {
+            this.enemies.push(new Neutral({ game, canvas }));
+            this.enemies.push(new Neutral({ game, canvas }));
+            this.enemies.push(new Neutral({ game, canvas }));
+          }, 2000);
+          this.phase++;
+        } else if (this.phase === PHASE.Slomo) {
+          this.phase++;
+        } else if (this.phase === PHASE.Chaser) {
+          this.enemies.push(new Chaser({ game, canvas, speed: 2, abilities: [PushAbility.add()] }));
+          this.phase++;
+        } else if (this.phase >= PHASE.Enemies) {
+          setTimeout(() => {
+            if (this.enemies.length < 10 && !HAS_TOUCH) {
+              this.enemies.push(new Neutral({ game, canvas }));
+              this.enemies.push(new Neutral({ game, canvas }));
+            }
+            this.enemies.push(new Neutral({ game, canvas }));
+          }, 2000);
+        }
       }
 
       userAction() {
